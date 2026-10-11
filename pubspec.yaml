@@ -1,0 +1,27 @@
+name: rummy_scoreboard
+description: "Rummy Score Keeper — a smart Rummy score sheet on your phone."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.13.3
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  firebase_core: ^4.15.0
+  firebase_auth: ^6.6.1
+  cloud_firestore: ^6.10.0
+  uuid: ^4.5.1
+  google_fonts: ^8.2.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
