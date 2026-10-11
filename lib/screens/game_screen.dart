@@ -192,30 +192,25 @@ class _ScoreTable extends StatelessWidget {
     final minTotal = allTotals.isEmpty ? 0 : allTotals.reduce((a, b) => a < b ? a : b);
 
     const double rW = 48;              // round-label column width
-    const double minPlayerW = 60;      // minimum per-player width
+    const double minPlayerW = 64;      // minimum per-player width
     const double hPad = 12;            // outer horizontal padding
     const double eW = editColW;        // trailing edit-icon column width
 
     return LayoutBuilder(builder: (context, constraints) {
-      final available = constraints.maxWidth - rW - eW - (hPad * 2);
-      final naturalPlayerW = available / players.length;
-      final fits = naturalPlayerW >= minPlayerW;
-      // Floor the per-player width so the summed cell widths never exceed the
-      // table width (sub-pixel rounding was causing a RenderFlex overflow).
-      final double pW = (fits ? naturalPlayerW : minPlayerW).floorToDouble();
-      // When flexing, the table fills the available width exactly; otherwise it
-      // is the sum of fixed columns (for horizontal scrolling).
-      final tableWidth = fits
-          ? (constraints.maxWidth - hPad * 2)
-          : (rW + pW * players.length + eW);
-
-      // When columns fit we let them flex to divide the row exactly (no pixel
-      // drift). When they don't fit we fall back to fixed widths + h-scroll.
-      final useFlex = fits;
+      // Available width inside the table padding for the player columns.
+      final available = constraints.maxWidth - (hPad * 2) - rW - eW;
+      // Give each player an equal share, but never below the minimum. When the
+      // equal share is below the minimum (many players), columns use the
+      // minimum width and the table scrolls horizontally.
+      final equalShare = available / players.length;
+      final double pW = equalShare >= minPlayerW
+          ? equalShare.floorToDouble()
+          : minPlayerW;
 
       final table = Container(
-        width: tableWidth,
-        margin: const EdgeInsets.symmetric(horizontal: hPad, vertical: 8),
+        // No fixed width — let the (fixed-width) cell columns define the
+        // table's intrinsic width. A fixed width here fought the scroll view's
+        // rounding and squeezed the Row by ~2px, causing the overflow.
         decoration: BoxDecoration(
           color: const Color(0xFFF4F7FD),
           borderRadius: BorderRadius.circular(14),
@@ -223,51 +218,48 @@ class _ScoreTable extends StatelessWidget {
         ),
         clipBehavior: Clip.antiAlias,
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-          // ── Header row (dark blue) — avatar, name, total pill with rank ──
+          // ── Header row (dark blue) — name + total pill ──
           Container(
             color: const Color(0xFF0D47A1),
-            child: Row(children: [
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
               _HeaderCell(width: rW, text: 'Round',
                 style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12, color: Colors.white)),
               for (var i = 0; i < players.length; i++)
-                _flex(useFlex, pW, _PlayerHeaderCell(
+                _PlayerHeaderCell(
                   player: players[i], index: i, width: pW,
                   total: totals[players[i].id] ?? 0,
                   rank: anyScored ? ranks[players[i].id] : null,
                   minTotal: minTotal, maxTotal: maxTotal,
-                )),
-              _editSpacer(), // keep columns aligned with the edit column below
+                ),
+              _editSpacer(),
             ]),
           ),
+          // ── Rank row (TOP, just below header) ──
+          _rankRow(players, ranks, anyScored, rW, pW),
           // ── Round rows ──
           for (var r = 1; r <= game.totalRounds; r++)
             _RoundRow(
               roundNumber: r, players: players, ctrl: ctrl,
               isCurrentRound: r == game.currentRound,
               userId: userId, isHost: isHost, roundColW: rW, playerColW: pW,
-              useFlex: useFlex,
             ),
-          // ── Rank row (BOTTOM) ──
-          _rankRow(players, ranks, anyScored, rW, pW, useFlex),
         ]),
       );
 
-      if (useFlex) {
-        // Make table exactly fill available width so flex children divide evenly.
-        return SingleChildScrollView(
-          child: SizedBox(width: constraints.maxWidth, child: Center(child: table)),
-        );
-      }
-      return SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: SingleChildScrollView(child: table),
+      // Vertical scroll outside, horizontal inside. Both give unbounded space
+      // in their axis, so the fixed-width table can never trigger an overflow.
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: hPad, vertical: 8),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.vertical,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: table,
+          ),
+        ),
       );
     });
   }
-
-  // Wrap a fixed-width cell in Expanded when flexing, else leave as-is.
-  static Widget _flex(bool useFlex, double w, Widget child) =>
-      useFlex ? Expanded(child: child) : child;
 
   // Fixed-width trailing column reserved for the per-row edit icon.
   static const double editColW = 36;
@@ -275,14 +267,14 @@ class _ScoreTable extends StatelessWidget {
 
   // Builds the Rank row (bottom): medals for top 3, #n for the rest.
   static Widget _rankRow(List<Player> players, Map<String, int> ranks,
-      bool anyScored, double rW, double pW, bool useFlex) {
+      bool anyScored, double rW, double pW) {
     return Container(
       color: const Color(0xFFD2E0F5),
-      child: Row(children: [
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
         _HeaderCell(width: rW, text: 'Rank',
           style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12, color: Color(0xFF0D47A1))),
         for (final p in players)
-          _flex(useFlex, pW, _RankCell(rank: anyScored ? ranks[p.id] : null, width: pW)),
+          _RankCell(rank: anyScored ? ranks[p.id] : null, width: pW),
         _editSpacer(),
       ]),
     );
@@ -329,7 +321,19 @@ class _PlayerHeaderCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scoreColor = _pillColor();
+    // Simple fixed colors:
+    //  0  → translucent (same subtle look as before)
+    //  +  → strong green pill, white text
+    //  −  → strong red pill, white text
+    final Color pillBg;
+    final Color textColor;
+    if (total > 0) {
+      pillBg = const Color(0xFF2E7D32); textColor = Colors.white;
+    } else if (total < 0) {
+      pillBg = const Color(0xFFC62828); textColor = Colors.white;
+    } else {
+      pillBg = Colors.white.withValues(alpha: 0.12); textColor = Colors.white;
+    }
     return Container(
       width: width,
       height: 78,
@@ -343,15 +347,20 @@ class _PlayerHeaderCell extends StatelessWidget {
             style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Colors.white, height: 1.1),
             overflow: TextOverflow.ellipsis, maxLines: 1, textAlign: TextAlign.center),
           const SizedBox(height: 4),
-          // Colored total (green→red shaded)
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(6),
+          // Total pill — green (+) / red (−) / translucent (0), bold white text.
+          // Wrapped in FittedBox so a 3-digit total (e.g. +120) scales down to
+          // fit the fixed column width instead of overflowing it.
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+              decoration: BoxDecoration(
+                color: pillBg,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(total > 0 ? '+$total' : '$total',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900, color: textColor, height: 1.1)),
             ),
-            child: Text(total > 0 ? '+$total' : '$total',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900, color: scoreColor, height: 1.1)),
           ),
         ],
       ),
@@ -412,7 +421,7 @@ class _RoundRow extends StatelessWidget {
   const _RoundRow({
     required this.roundNumber, required this.players, required this.ctrl,
     required this.isCurrentRound, required this.userId, required this.isHost,
-    required this.roundColW, required this.playerColW, this.useFlex = false,
+    required this.roundColW, required this.playerColW,
   });
   final int roundNumber;
   final List<Player> players;
@@ -422,7 +431,6 @@ class _RoundRow extends StatelessWidget {
   final bool isHost;
   final double roundColW;
   final double playerColW;
-  final bool useFlex;
   @override
   Widget build(BuildContext context) {
     final game = ctrl.game!;
@@ -436,13 +444,13 @@ class _RoundRow extends StatelessWidget {
         color: rowColor,
         border: isCurrentRound ? const Border(left: BorderSide(color: Color(0xFF1565C0), width: 3)) : null,
       ),
-      child: Row(children: [
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
         SizedBox(width: roundColW, height: 44,
           child: Center(child: Text('$roundNumber',
             style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13,
               color: isCurrentRound ? const Color(0xFF1565C0) : const Color(0xFF5A6080))))),
         for (final p in players)
-          _ScoreTable._flex(useFlex, playerColW, _ScoreCell(
+          _ScoreCell(
             player: p, round: round, isCurrentRound: isCurrentRound, width: playerColW,
             scootRunningCount: _scootsUpTo(p.id, roundNumber),
             onTap: isCurrentRound
@@ -450,7 +458,7 @@ class _RoundRow extends StatelessWidget {
                 : (isPast && (isHost || round?.winnerPlayerId == p.id))
                     ? () => _openEntry(context, round, isEdit: true)
                     : null,
-          )),
+          ),
         // Edit column — show an edit icon for the current round and any
         // played round the user is allowed to edit.
         SizedBox(
@@ -546,15 +554,20 @@ class _ScoreCell extends StatelessWidget {
 
     return GestureDetector(
       onTap: onTap,
-      child: Container(
+      child: SizedBox(
+        // Outer size is exactly the column width — no margin can push it over.
         width: width, height: 44,
-        decoration: (isCurrentRound && score == null) ? BoxDecoration(
-          border: Border.all(color: const Color(0xFF1565C0).withValues(alpha: 0.3)),
-          borderRadius: BorderRadius.circular(6),
-          color: const Color(0xFFE8F0FE),
-        ) : null,
-        margin: isCurrentRound ? const EdgeInsets.all(2) : null,
-        child: Center(child: content),
+        child: Padding(
+          padding: isCurrentRound ? const EdgeInsets.all(2) : EdgeInsets.zero,
+          child: Container(
+            decoration: (isCurrentRound && score == null) ? BoxDecoration(
+              border: Border.all(color: const Color(0xFF1565C0).withValues(alpha: 0.3)),
+              borderRadius: BorderRadius.circular(6),
+              color: const Color(0xFFE8F0FE),
+            ) : null,
+            child: Center(child: content),
+          ),
+        ),
       ),
     );
   }
@@ -823,7 +836,7 @@ class _ScoreEntryPageState extends State<ScoreEntryPage> {
                         stepBtn(Icons.remove_circle_outline, () => setValue(value - 1)),
                         const SizedBox(width: 10),
                         SizedBox(
-                          width: 96,
+                          width: 120,
                           child: TextField(
                             controller: ctrl,
                             keyboardType: TextInputType.number,
@@ -838,6 +851,22 @@ class _ScoreEntryPageState extends State<ScoreEntryPage> {
                               hintText: '20',
                               border: const OutlineInputBorder(),
                               contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                              // Tap the arrow to pick a value from the 2..80 list
+                              suffixIcon: PopupMenuButton<int>(
+                                icon: const Icon(Icons.arrow_drop_down, color: red, size: 28),
+                                tooltip: 'Pick a value',
+                                constraints: const BoxConstraints(maxHeight: 320),
+                                onSelected: setValue,
+                                itemBuilder: (_) => [
+                                  for (var n = 2; n <= 80; n++)
+                                    PopupMenuItem(
+                                      value: n,
+                                      height: 36,
+                                      child: Text('−$n',
+                                        style: const TextStyle(fontWeight: FontWeight.w700, color: red)),
+                                    ),
+                                ],
+                              ),
                             ),
                             onChanged: (t) {
                               final v = int.tryParse(t);
@@ -849,7 +878,7 @@ class _ScoreEntryPageState extends State<ScoreEntryPage> {
                         stepBtn(Icons.add_circle_outline, () => setValue(value + 1)),
                       ],
                     ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 18),
                     SizedBox(
                       width: double.infinity,
                       child: FilledButton(

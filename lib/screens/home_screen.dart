@@ -77,7 +77,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 Expanded(
                   child: _HeaderButton(
                     icon: Icons.add,
-                    label: '+ Create Game',
+                    label: 'Create Game',
                     onTap: () => _goCreate(context),
                   ),
                 ),
@@ -102,26 +102,11 @@ class _HomeScreenState extends State<HomeScreen> {
     return SliverToBoxAdapter(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-        child: Row(
-          children: [
-            Expanded(
-              child: _QuickCard(
-                icon: Icons.login_rounded,
-                title: 'Join with Code',
-                subtitle: 'Enter a game code to join',
-                onTap: () => _goJoin(context),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _QuickCard(
-                icon: Icons.history_rounded,
-                title: 'Game History',
-                subtitle: 'View your past games',
-                onTap: null, // scrolls down — handled naturally
-              ),
-            ),
-          ],
+        child: _QuickCard(
+          icon: Icons.history_rounded,
+          title: 'Game History',
+          subtitle: 'View your past games',
+          onTap: null, // scrolls down — handled naturally
         ),
       ),
     );

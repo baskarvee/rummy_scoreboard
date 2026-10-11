@@ -59,7 +59,12 @@ class _CreateGameScreenState extends State<CreateGameScreen> {
       _players.add(name);
       _playerCtrl.clear();
     });
-    _playerFocus.requestFocus();
+    // Re-focus after the rebuild completes. On the first add the player list
+    // appears above the field, changing the layout; requesting focus
+    // synchronously then gets lost, so defer to the next frame.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _playerFocus.requestFocus();
+    });
   }
 
   void _removePlayer(int index) {
